@@ -724,20 +724,20 @@ impl FamilyWallet {
             panic!("Only family members can propose transactions");
         }
 
-        // Fetch Regular config (source of truth for boundary)
-        let reg_config_key = Self::get_config_key(TransactionType::RegularWithdrawal);
-        let reg_config: MultiSigConfig = env
+        // LargeWithdrawal config is the source of truth for the spending-limit boundary.
+        let config_key = Self::get_config_key(TransactionType::LargeWithdrawal);
+        let config: MultiSigConfig = env
             .storage()
             .instance()
-            .get(&reg_config_key)
-            .unwrap_or_else(|| panic!("Regular multi-sig config not found"));
+            .get(&config_key)
+            .unwrap_or_else(|| panic!("Multi-sig config not found"));
 
         let mut requires_multisig = true;
         let mut resolved_tx_type = tx_type;
 
         // Normalize tier selection
         if let TransactionData::Withdrawal(_, _, amount) = &data {
-            let limit = reg_config.spending_limit;
+            let limit = config.spending_limit;
 
             let tier = select_withdrawal_tier(*amount, limit);
 
@@ -746,7 +746,7 @@ impl FamilyWallet {
                 WithdrawalTier::Large => TransactionType::LargeWithdrawal,
             };
 
-            requires_multisig = true;
+            requires_multisig = matches!(tier, WithdrawalTier::Large);
         } else if let TransactionType::RegularWithdrawal = resolved_tx_type {
             // Non-withdrawals incorrectly tagged
             requires_multisig = false;
@@ -1783,6 +1783,16 @@ impl FamilyWallet {
 
     /// Get the persisted cumulative spending tracker for a member, if any.
     pub fn get_spending_tracker(env: Env, member: Address) -> Option<SpendingTracker> {
+        let limits: Map<Address, PrecisionSpendingLimit> = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("PREC_LIM"))
+            .unwrap_or_else(|| Map::new(&env));
+        let limit = limits.get(member.clone())?;
+        if limit.enable_rollover {
+            return Some(Self::current_spending_tracker(&env, &member));
+        }
+
         env.storage()
             .instance()
             .get::<_, Map<Address, SpendingTracker>>(&symbol_short!("SPND_TRK"))
@@ -2775,15 +2785,15 @@ impl FamilyWallet {
         match data {
             TransactionData::Withdrawal(token, recipient, amount) => {
                 // RE-COMPUTE TIER (CRITICAL FIX)
-                let reg_config_key = Self::get_config_key(TransactionType::RegularWithdrawal);
+                let config_key = Self::get_config_key(TransactionType::LargeWithdrawal);
 
-                let reg_config: MultiSigConfig = env
+                let config: MultiSigConfig = env
                     .storage()
                     .instance()
-                    .get(&reg_config_key)
-                    .unwrap_or_else(|| panic!("Regular multi-sig config not found"));
+                    .get(&config_key)
+                    .unwrap_or_else(|| panic!("Multi-sig config not found"));
 
-                let limit_i128 = reg_config.spending_limit;
+                let limit_i128 = config.spending_limit;
                 let expected_tier = select_withdrawal_tier(*amount, limit_i128);
 
                 let expected_tx_type = match expected_tier {
@@ -2817,7 +2827,7 @@ impl FamilyWallet {
             }
 
             // unchanged cases
-            (TransactionData::SplitConfigChange(..)) => 0,
+            TransactionData::SplitConfigChange(..) => 0,
 
             TransactionData::RoleChange(member, new_role) => {
                 let mut members: Map<Address, FamilyMember> = env
@@ -2856,8 +2866,6 @@ impl FamilyWallet {
             }
 
             TransactionData::PolicyCancellation(..) => 0,
-
-            _ => panic!("Invalid transaction type or data mismatch"),
         }
     }
 

@@ -73,12 +73,8 @@ impl InsuranceStub {
             .instance()
             .get(&symbol_short!("POLICIES"))
             .unwrap_or_else(|| Vec::new(&env));
-        for p in all.iter() {
-            if p.id == policy_id {
-                return Some(p);
-            }
-        }
-        None
+        all.iter()
+            .find_map(|p| (p.id == policy_id).then(|| p.clone()))
     }
 
     pub fn get_total_monthly_premium(env: Env, _owner: Address) -> i128 {
