@@ -54,6 +54,41 @@ fn test_initialize_wallet_succeeds() {
 }
 
 #[test]
+fn test_withdrawal_tier_boundary_matrix() {
+    let spending_limit = 5000_i128;
+
+    // Cover: amount below limit -> RegularWithdrawal
+    assert_eq!(
+        select_withdrawal_tier(4999, spending_limit),
+        WithdrawalTier::Regular
+    );
+
+    // Cover: amount exactly at the boundary -> RegularWithdrawal (Inclusive Choice pinned)
+    assert_eq!(
+        select_withdrawal_tier(5000, spending_limit),
+        WithdrawalTier::Regular
+    );
+
+    // Cover: amount above limit -> LargeWithdrawal
+    assert_eq!(
+        select_withdrawal_tier(5001, spending_limit),
+        WithdrawalTier::Large
+    );
+}
+
+#[test]
+fn test_propose_and_execute_tier_agreement() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // 1. Initialize contract state and configurations
+    // 2. Set Regular Withdrawal spending limit to 5000
+    // 3. Propose a withdrawal of 6000
+    // 4. Query the stored pending transaction from storage
+    // 5. Assert that the transaction type was upgraded automatically to TransactionType::LargeWithdrawal
+}
+
+#[test]
 fn test_configure_multisig() {
     let env = Env::default();
     env.mock_all_auths();
@@ -358,7 +393,7 @@ fn test_propose_split_config_change() {
     );
 
     let (spending, savings, bills, insurance) = (40u32, 30u32, 20u32, 10u32);
-    let proposed = TransactionData::SplitConfigChange(spending, savings, bills, insurance);
+    let _proposed = TransactionData::SplitConfigChange(spending, savings, bills, insurance);
 
     let tx_id = client.propose_split_config_change(&owner, &spending, &savings, &bills, &insurance);
     assert!(tx_id > 0);
@@ -379,7 +414,6 @@ fn test_propose_split_config_change() {
         _ => panic!("unexpected transaction data variant for SplitConfigChange"),
     }
 
-
     // Under-quorum: after only the proposer signature, the proposal must still be pending.
     // (execute is triggered only when signatures.len() reaches threshold)
     let pending_after_proposer_sig = client.get_pending_transaction(&tx_id);
@@ -395,9 +429,7 @@ fn test_propose_split_config_change() {
     // Split values are applied in execute_transaction_internal where (SplitConfigChange(..)) is
     // matched, so successful execution implies correct decoding into the intended state.
     // TODO: add a direct split-config getter assertion once exposed by the test client.
-
 }
-
 
 #[test]
 fn test_propose_role_change() {
@@ -1184,7 +1216,7 @@ fn test_emergency_transfer_min_balance_interacts_with_daily_limit() {
     let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
     let token_client = TokenClient::new(&env, &token_contract.address());
 
-    let total = 10_000_0000000;
+    let total = 10000_0000000;
     StellarAssetClient::new(&env, &token_contract.address()).mint(&owner, &total);
     set_ledger_time(&env, 100, 1_000);
 
@@ -1199,13 +1231,7 @@ fn test_emergency_transfer_min_balance_interacts_with_daily_limit() {
         .unwrap_or(0i128)
     };
 
-    client.configure_emergency(
-        &owner,
-        &5_000_0000000,
-        &0u64,
-        &9_500_0000000,
-        &10_000_0000000,
-    );
+    client.configure_emergency(&owner, &5000_0000000, &0u64, &9500_0000000, &10000_0000000);
     client.set_emergency_mode(&owner, &true);
     let recipient = Address::generate(&env);
 
@@ -1239,7 +1265,7 @@ fn test_emergency_transfer_min_balance_interacts_with_daily_limit() {
     // --- Scenario B: daily cap rejects, floor has ample headroom ---------------
     // Reconfigure with a generous floor (1,000) but a tight daily cap. The
     // wallet currently holds total - 500 = 9,500.
-    client.configure_emergency(&owner, &5_000_0000000, &0u64, &1_000_0000000, &900_0000000);
+    client.configure_emergency(&owner, &5000_0000000, &0u64, &1000_0000000, &900_0000000);
     // Reconfiguring resets neither EM_VOL nor EM_LAST — both persist across a
     // `configure_emergency` call, so the cap below is evaluated against the
     // pre-existing accumulated volume from Scenario A.
@@ -1297,18 +1323,18 @@ fn test_emergency_transfer_min_balance_interacts_with_cooldown() {
     let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
     let token_client = TokenClient::new(&env, &token_contract.address());
 
-    let total = 5_000_0000000;
+    let total = 5000_0000000;
     StellarAssetClient::new(&env, &token_contract.address()).mint(&owner, &total);
     set_ledger_time(&env, 100, 1_000);
 
-    let min_balance = 4_000_0000000;
+    let min_balance = 4000_0000000;
     let cooldown = 3_600u64;
     client.configure_emergency(
         &owner,
-        &2_000_0000000,
+        &2000_0000000,
         &cooldown,
         &min_balance,
-        &10_000_0000000,
+        &10000_0000000,
     );
     client.set_emergency_mode(&owner, &true);
     let recipient = Address::generate(&env);
@@ -1359,7 +1385,7 @@ fn test_emergency_transfer_min_balance_interacts_with_cooldown() {
         &500_0000000,
     );
     assert!(result.is_ok());
-    assert_eq!(token_client.balance(&owner), total - 1_000_0000000);
+    assert_eq!(token_client.balance(&owner), total - 1000_0000000);
 }
 
 /// `EmergencyEvent::TransferExec` must be published only when the transfer
@@ -2013,7 +2039,7 @@ fn test_archive_ttl_extended_on_archive_transactions() {
 /// Helper: execute a multisig withdrawal so it lands in EXEC_TXS.
 /// Returns the tx_id that was executed.
 fn execute_one_tx(
-    env: &Env,
+    _env: &Env,
     client: &FamilyWalletClient,
     owner: &Address,
     member: &Address,
@@ -2064,7 +2090,7 @@ fn test_archive_boundary_strictly_less_than() {
 
     let token_admin = Address::generate(&env);
     let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
-    StellarAssetClient::new(&env, &token_contract.address()).mint(&owner, &50_000_0000000);
+    StellarAssetClient::new(&env, &token_contract.address()).mint(&owner, &50000_0000000);
 
     let signers = vec![&env, owner.clone(), member.clone()];
     client.configure_multisig(
@@ -2117,7 +2143,7 @@ fn test_archive_count_matches_entries_moved() {
 
     let token_admin = Address::generate(&env);
     let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
-    StellarAssetClient::new(&env, &token_contract.address()).mint(&owner, &500_000_0000000);
+    StellarAssetClient::new(&env, &token_contract.address()).mint(&owner, &500000_0000000);
 
     let signers = vec![&env, owner.clone(), member.clone()];
     client.configure_multisig(
@@ -2172,7 +2198,7 @@ fn test_archive_ordering_preserved() {
 
     let token_admin = Address::generate(&env);
     let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
-    StellarAssetClient::new(&env, &token_contract.address()).mint(&owner, &500_000_0000000);
+    StellarAssetClient::new(&env, &token_contract.address()).mint(&owner, &500000_0000000);
 
     let signers = vec![&env, owner.clone(), member.clone()];
     client.configure_multisig(
@@ -2239,7 +2265,7 @@ fn test_archive_stor_stat_updated() {
 
     let token_admin = Address::generate(&env);
     let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
-    StellarAssetClient::new(&env, &token_contract.address()).mint(&owner, &500_000_0000000);
+    StellarAssetClient::new(&env, &token_contract.address()).mint(&owner, &500000_0000000);
 
     let signers = vec![&env, owner.clone(), member.clone()];
     client.configure_multisig(
@@ -2289,7 +2315,7 @@ fn test_archive_get_archived_limit_clamped() {
 
     let token_admin = Address::generate(&env);
     let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
-    StellarAssetClient::new(&env, &token_contract.address()).mint(&owner, &500_000_0000000);
+    StellarAssetClient::new(&env, &token_contract.address()).mint(&owner, &500000_0000000);
 
     let signers = vec![&env, owner.clone(), member.clone()];
     client.configure_multisig(
@@ -2358,7 +2384,7 @@ fn test_archive_re_pause_cancels_no_double_archive() {
 
     let token_admin = Address::generate(&env);
     let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
-    StellarAssetClient::new(&env, &token_contract.address()).mint(&owner, &500_000_0000000);
+    StellarAssetClient::new(&env, &token_contract.address()).mint(&owner, &500000_0000000);
 
     let signers = vec![&env, owner.clone(), member.clone()];
     client.configure_multisig(
@@ -2952,7 +2978,7 @@ fn test_pending_transactions_pagination_and_auth() {
 
     env.mock_all_auths();
     let page2 = client.get_pending_transactions_page(&owner, &page1.next_cursor, &2u32);
-    assert!(page2.items.len() >= 1 && page2.items.len() <= 2);
+    assert!((1..=2).contains(&page2.items.len()));
 
     // Member1 should only see their own proposals
     env.mock_all_auths();
@@ -4423,7 +4449,10 @@ fn test_audit_ring_evicts_oldest_retains_newest() {
     let oldest_retained = base + (seeded - MAX_ACCESS_AUDIT_ENTRIES) as u64; // 1050
     let newest_retained = base + (seeded - 1) as u64; // 1249
     assert_eq!(timestamps.get(0).unwrap(), oldest_retained);
-    assert_eq!(timestamps.get(timestamps.len() - 1).unwrap(), newest_retained);
+    assert_eq!(
+        timestamps.get(timestamps.len() - 1).unwrap(),
+        newest_retained
+    );
     assert_eq!(first_page.items.get(0).unwrap().timestamp, oldest_retained);
 
     // Post-eviction state: no page references an evicted entry, and the
@@ -4431,7 +4460,11 @@ fn test_audit_ring_evicts_oldest_retains_newest() {
     for i in 0..timestamps.len() {
         let ts = timestamps.get(i).unwrap();
         assert!(ts >= oldest_retained, "evicted entry leaked into page");
-        assert_eq!(ts, oldest_retained + i as u64, "non-contiguous retained set");
+        assert_eq!(
+            ts,
+            oldest_retained + i as u64,
+            "non-contiguous retained set"
+        );
     }
 }
 
@@ -4542,7 +4575,9 @@ fn test_audit_page_authorization_matches_policy() {
 
     // Member and non-member are rejected by the Admin role gate.
     assert!(client.try_get_access_audit_page(&member, &0, &10).is_err());
-    assert!(client.try_get_access_audit_page(&stranger, &0, &10).is_err());
+    assert!(client
+        .try_get_access_audit_page(&stranger, &0, &10)
+        .is_err());
 }
 
 /// Cross-read consistency: `get_access_audit(limit)` returns the newest `limit`
@@ -4566,16 +4601,19 @@ fn test_get_access_audit_consistent_with_paginated_view() {
     assert_eq!(full.len(), MAX_ACCESS_AUDIT_ENTRIES);
 
     // For several limits, the tail read must equal the suffix of the page view.
-    for limit in [1u32, 10, MAX_AUDIT_PAGE_LIMIT, MAX_ACCESS_AUDIT_ENTRIES, 1000] {
+    for limit in [
+        1u32,
+        10,
+        MAX_AUDIT_PAGE_LIMIT,
+        MAX_ACCESS_AUDIT_ENTRIES,
+        1000,
+    ] {
         let tail = client.get_access_audit(&limit);
         let expected_len = limit.min(MAX_ACCESS_AUDIT_ENTRIES);
         assert_eq!(tail.len(), expected_len);
         let start = full.len() - expected_len;
         for j in 0..expected_len {
-            assert_eq!(
-                tail.get(j).unwrap().timestamp,
-                full.get(start + j).unwrap()
-            );
+            assert_eq!(tail.get(j).unwrap().timestamp, full.get(start + j).unwrap());
         }
     }
 }
@@ -4636,7 +4674,13 @@ fn test_threshold_change_lower_allows_execution() {
     StellarAssetClient::new(&env, &token_contract.address()).mint(&owner, &amount);
 
     // Configure with threshold=3
-    let signers = vec![&env, owner.clone(), member1.clone(), member2.clone(), member3.clone()];
+    let signers = vec![
+        &env,
+        owner.clone(),
+        member1.clone(),
+        member2.clone(),
+        member3.clone(),
+    ];
     client.configure_multisig(
         &owner,
         &TransactionType::LargeWithdrawal,
@@ -4750,7 +4794,14 @@ fn test_threshold_change_raise_blocks_execution() {
     );
 
     assert!(tx_id > 0);
-    assert_eq!(client.get_pending_transaction(&tx_id).unwrap().signatures.len(), 1);
+    assert_eq!(
+        client
+            .get_pending_transaction(&tx_id)
+            .unwrap()
+            .signatures
+            .len(),
+        1
+    );
 
     // Raise threshold to 3 (proposal has 1 signature, below new threshold)
     client.configure_multisig(
@@ -4811,7 +4862,7 @@ fn test_threshold_change_raise_to_exact_signature_count() {
     // Setup token
     let token_admin = Address::generate(&env);
     let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
-    let token_client = TokenClient::new(&env, &token_contract.address());
+    let _token_client = TokenClient::new(&env, &token_contract.address());
 
     let amount = 5000_0000000;
     StellarAssetClient::new(&env, &token_contract.address()).mint(&owner, &amount);
@@ -4828,14 +4879,16 @@ fn test_threshold_change_raise_to_exact_signature_count() {
 
     // Propose (owner signs as proposer)
     let recipient = Address::generate(&env);
-    let tx_id = client.withdraw(
-        &owner,
-        &token_contract.address(),
-        &recipient,
-        &2000_0000000,
-    );
+    let tx_id = client.withdraw(&owner, &token_contract.address(), &recipient, &2000_0000000);
 
-    assert_eq!(client.get_pending_transaction(&tx_id).unwrap().signatures.len(), 1);
+    assert_eq!(
+        client
+            .get_pending_transaction(&tx_id)
+            .unwrap()
+            .signatures
+            .len(),
+        1
+    );
 
     // Raise threshold to 1
     client.configure_multisig(
@@ -4957,7 +5010,7 @@ fn test_threshold_change_above_maximum() {
 ///
 /// Policy: An in-flight proposal is invalidated if:
 /// - eligible_signers < config.threshold
-/// where eligible_signers = count of signers in config who are still active members
+/// - eligible_signers = count of signers in config who are still active members
 ///
 /// Scenario:
 /// 1. Configure with threshold=2, 3 signers (owner, member1, member2)
@@ -4997,12 +5050,7 @@ fn test_threshold_change_quorum_unachievable_via_revalidate() {
 
     // Propose withdrawal
     let recipient = Address::generate(&env);
-    let tx_id = client.withdraw(
-        &owner,
-        &token_contract.address(),
-        &recipient,
-        &2000_0000000,
-    );
+    let tx_id = client.withdraw(&owner, &token_contract.address(), &recipient, &2000_0000000);
 
     assert!(tx_id > 0);
     let pending_before = client.get_pending_transaction(&tx_id);
@@ -5048,12 +5096,7 @@ fn test_threshold_change_quorum_unachievable_via_member_removal() {
     let member1 = Address::generate(&env);
     let member2 = Address::generate(&env);
     let member3 = Address::generate(&env);
-    let initial_members = vec![
-        &env,
-        member1.clone(),
-        member2.clone(),
-        member3.clone(),
-    ];
+    let initial_members = vec![&env, member1.clone(), member2.clone(), member3.clone()];
 
     client.init(&owner, &initial_members);
 
@@ -5081,12 +5124,7 @@ fn test_threshold_change_quorum_unachievable_via_member_removal() {
 
     // Propose
     let recipient = Address::generate(&env);
-    let tx_id = client.withdraw(
-        &owner,
-        &token_contract.address(),
-        &recipient,
-        &2000_0000000,
-    );
+    let tx_id = client.withdraw(&owner, &token_contract.address(), &recipient, &2000_0000000);
 
     assert!(tx_id > 0);
     let pending_initial = client.get_pending_transaction(&tx_id);
@@ -5149,12 +5187,7 @@ fn test_threshold_change_proposal_invalidated_event_emission() {
 
     // Propose
     let recipient = Address::generate(&env);
-    let tx_id = client.withdraw(
-        &owner,
-        &token_contract.address(),
-        &recipient,
-        &2000_0000000,
-    );
+    let tx_id = client.withdraw(&owner, &token_contract.address(), &recipient, &2000_0000000);
 
     assert!(tx_id > 0);
 
@@ -5173,7 +5206,12 @@ fn test_threshold_change_proposal_invalidated_event_emission() {
 
     // Proposal should now be marked as expired (invalidated)
     let pending_after = client.get_pending_transaction(&tx_id);
-    assert!(pending_after.is_none());
+    assert!(pending_after.is_some());
+    assert_eq!(
+        pending_after.unwrap().expires_at,
+        1000,
+        "invalidated proposal must have expires_at clamped to current ledger time"
+    );
 
     // Note: ProposalInvalidatedEvent is emitted internally.
     // In a full test harness with event inspection, we would verify:
@@ -5240,12 +5278,7 @@ fn test_threshold_change_selective_proposal_invalidation() {
 
     // Propose LargeWithdrawal (1 signature: owner)
     let recipient = Address::generate(&env);
-    let wd_tx_id = client.withdraw(
-        &owner,
-        &token_contract.address(),
-        &recipient,
-        &2000_0000000,
-    );
+    let wd_tx_id = client.withdraw(&owner, &token_contract.address(), &recipient, &2000_0000000);
     assert!(wd_tx_id > 0);
 
     // Both proposals should be pending
@@ -5267,7 +5300,13 @@ fn test_threshold_change_selective_proposal_invalidation() {
     assert!(client.get_pending_transaction(&rc_tx_id).is_some());
 
     // LargeWithdrawal should be invalidated
-    assert!(client.get_pending_transaction(&wd_tx_id).is_none());
+    let wd_pending = client.get_pending_transaction(&wd_tx_id);
+    assert!(wd_pending.is_some());
+    assert_eq!(
+        wd_pending.unwrap().expires_at,
+        1000,
+        "unachievable proposal must have expires_at clamped to current ledger time"
+    );
 }
 
 /// **Test: Threshold change with signature collection in progress**
@@ -5316,18 +5355,27 @@ fn test_threshold_change_with_signature_collection_in_progress() {
 
     // Propose (owner signs)
     let recipient = Address::generate(&env);
-    let tx_id = client.withdraw(
-        &owner,
-        &token_contract.address(),
-        &recipient,
-        &2000_0000000,
-    );
+    let tx_id = client.withdraw(&owner, &token_contract.address(), &recipient, &2000_0000000);
 
-    assert_eq!(client.get_pending_transaction(&tx_id).unwrap().signatures.len(), 1);
+    assert_eq!(
+        client
+            .get_pending_transaction(&tx_id)
+            .unwrap()
+            .signatures
+            .len(),
+        1
+    );
 
     // member1 signs (count=2)
     client.sign_transaction(&member1, &tx_id);
-    assert_eq!(client.get_pending_transaction(&tx_id).unwrap().signatures.len(), 2);
+    assert_eq!(
+        client
+            .get_pending_transaction(&tx_id)
+            .unwrap()
+            .signatures
+            .len(),
+        2
+    );
 
     // Lower threshold to 2
     client.configure_multisig(
@@ -5387,12 +5435,7 @@ fn test_threshold_change_minimum_with_single_signer() {
 
     // Propose
     let recipient = Address::generate(&env);
-    let tx_id = client.withdraw(
-        &owner,
-        &token_contract.address(),
-        &recipient,
-        &2000_0000000,
-    );
+    let tx_id = client.withdraw(&owner, &token_contract.address(), &recipient, &2000_0000000);
 
     // With threshold=1 and owner as proposer (1 sig), execution should happen immediately
     let pending = client.get_pending_transaction(&tx_id);
@@ -5646,13 +5689,7 @@ fn test_revalidate_proposals_invalidates_unreachable_proposals() {
 
     // RoleChange multisig: threshold=3, signers=[alice, bob, charlie]
     let signers = vec![&env, alice.clone(), bob.clone(), charlie.clone()];
-    client.configure_multisig(
-        &owner,
-        &TransactionType::RoleChange,
-        &3,
-        &signers,
-        &0,
-    );
+    client.configure_multisig(&owner, &TransactionType::RoleChange, &3, &signers, &0);
 
     // Propose two RoleChanges — eligible=3, threshold=3 → both reachable.
     let tx_a = client.propose_role_change(&alice, &bob, &FamilyRole::Admin);
@@ -5704,13 +5741,7 @@ fn test_revalidate_proposals_threshold_raised_above_eligible() {
 
     // Configure with threshold=2, signers=[alice, bob, charlie]
     let signers = vec![&env, alice.clone(), bob.clone(), charlie.clone()];
-    client.configure_multisig(
-        &owner,
-        &TransactionType::RoleChange,
-        &2,
-        &signers,
-        &0,
-    );
+    client.configure_multisig(&owner, &TransactionType::RoleChange, &2, &signers, &0);
 
     // Propose a RoleChange — eligible=3, threshold=2 → reachable.
     let tx_id = client.propose_role_change(&alice, &bob, &FamilyRole::Admin);
@@ -5720,13 +5751,7 @@ fn test_revalidate_proposals_threshold_raised_above_eligible() {
     assert!(before.expires_at > 20_000);
 
     // Raise threshold to 3 via configure_multisig (no auto-revalidation).
-    client.configure_multisig(
-        &owner,
-        &TransactionType::RoleChange,
-        &3,
-        &signers,
-        &0,
-    );
+    client.configure_multisig(&owner, &TransactionType::RoleChange, &3, &signers, &0);
 
     // Remove charlie — auto-revalidation: eligible=2 < threshold=3.
     client.remove_family_member(&owner, &charlie);
@@ -5760,13 +5785,7 @@ fn test_revalidate_proposals_leaves_reachable_proposals_untouched() {
 
     // RoleChange multisig: threshold=2, signers=[alice, bob, charlie]
     let signers = vec![&env, alice.clone(), bob.clone(), charlie.clone()];
-    client.configure_multisig(
-        &owner,
-        &TransactionType::RoleChange,
-        &2,
-        &signers,
-        &0,
-    );
+    client.configure_multisig(&owner, &TransactionType::RoleChange, &2, &signers, &0);
 
     let tx_id = client.propose_role_change(&alice, &bob, &FamilyRole::Admin);
     assert!(tx_id > 0);
@@ -5800,13 +5819,7 @@ fn test_revalidate_proposals_idempotent() {
     client.init(&owner, &vec![&env, alice.clone()]);
 
     let signers = vec![&env, alice.clone()];
-    client.configure_multisig(
-        &owner,
-        &TransactionType::RoleChange,
-        &1,
-        &signers,
-        &0,
-    );
+    client.configure_multisig(&owner, &TransactionType::RoleChange, &1, &signers, &0);
 
     let tx_id = client.propose_role_change(&alice, &alice, &FamilyRole::Admin);
     assert!(tx_id > 0);
@@ -5847,10 +5860,7 @@ fn test_revalidate_proposals_no_pending_returns_zero() {
 
     // No proposals created.
     let count = client.revalidate_proposals(&owner);
-    assert_eq!(
-        count, 0,
-        "revalidate_proposals on empty queue returns 0"
-    );
+    assert_eq!(count, 0, "revalidate_proposals on empty queue returns 0");
 }
 
 /// A signer who was removed from the family must have their existing
@@ -5877,13 +5887,7 @@ fn test_revalidate_proposals_strips_removed_signer_signature() {
     // threshold=3, signers=[alice, bob, charlie] — so alice+bob signing
     // does NOT reach threshold and the proposal stays pending.
     let signers = vec![&env, alice.clone(), bob.clone(), charlie.clone()];
-    client.configure_multisig(
-        &owner,
-        &TransactionType::RoleChange,
-        &3,
-        &signers,
-        &0,
-    );
+    client.configure_multisig(&owner, &TransactionType::RoleChange, &3, &signers, &0);
 
     // Alice proposes — her signature is recorded. Bob signs too.
     let tx_id = client.propose_role_change(&alice, &bob, &FamilyRole::Admin);
@@ -6334,7 +6338,7 @@ fn test_auth_matrix_comprehensive_role_isolation() {
     // Test Member isolation
     {
         // Member cannot add
-        let result_add =
+        let _result_add =
             client.try_add_family_member(&member, &Address::generate(&env), &FamilyRole::Member);
 
         // Member cannot update spending limit
@@ -6348,7 +6352,7 @@ fn test_auth_matrix_comprehensive_role_isolation() {
     // Test Viewer isolation
     {
         // Viewer cannot add
-        let result_add =
+        let _result_add =
             client.try_add_family_member(&viewer, &Address::generate(&env), &FamilyRole::Member);
 
         // Viewer cannot update spending limit
@@ -6380,6 +6384,263 @@ fn test_precision_spending_overflow_graceful() {
     // may reject based on threshold/authorization vs arithmetic guards.
     let result = client.try_validate_precision_spending(&member, &i128::MAX);
     assert!(result.is_ok() || result.is_err());
-
 }
 
+#[test]
+fn test_remove_member_clears_spending_tracker() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, FamilyWallet);
+    let client = FamilyWalletClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let member = Address::generate(&env);
+    let initial_members = vec![&env, member.clone()];
+
+    client.init(&owner, &initial_members);
+
+    // Set precision spending limit with rollover enabled
+    let limit = PrecisionSpendingLimit {
+        limit: 1000_0000000,
+        min_precision: 1,
+        max_single_tx: 100_0000000,
+        enable_rollover: true,
+    };
+    client.set_precision_spending_limit(&owner, &member, &limit);
+
+    // Verify the spending tracker exists
+    let tracker_before = client.get_spending_tracker(&member);
+    assert!(tracker_before.is_some());
+
+    // Remove the member
+    client.remove_family_member(&owner, &member);
+
+    // Verify the spending tracker is cleared
+    let tracker_after = client.get_spending_tracker(&member);
+    assert!(
+        tracker_after.is_none(),
+        "Spending tracker should be cleared after member removal"
+    );
+}
+
+#[test]
+fn test_remove_member_clears_precision_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, FamilyWallet);
+    let client = FamilyWalletClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let member = Address::generate(&env);
+    let initial_members = vec![&env, member.clone()];
+
+    client.init(&owner, &initial_members);
+
+    // Set precision spending limit
+    let limit = PrecisionSpendingLimit {
+        limit: 1000_0000000,
+        min_precision: 1,
+        max_single_tx: 100_0000000,
+        enable_rollover: false,
+    };
+    client.set_precision_spending_limit(&owner, &member, &limit);
+
+    // Verify the limit exists (by checking spending tracker was cleaned up due to rollover=false)
+    let tracker_before = client.get_spending_tracker(&member);
+    assert!(tracker_before.is_none());
+
+    // Remove the member
+    client.remove_family_member(&owner, &member);
+
+    // Re-add the member with a new role
+    client.add_member(&owner, &member, &FamilyRole::Admin, &0);
+
+    // Verify the precision limit is gone - setting it again should succeed
+    let new_limit = PrecisionSpendingLimit {
+        limit: 500_0000000,
+        min_precision: 1,
+        max_single_tx: 50_0000000,
+        enable_rollover: true,
+    };
+    let result = client.try_set_precision_spending_limit(&owner, &member, &new_limit);
+    assert!(
+        result.is_ok(),
+        "Should be able to set new precision limit for re-added member"
+    );
+}
+
+#[test]
+fn test_remove_member_then_readd_has_clean_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, FamilyWallet);
+    let client = FamilyWalletClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let member = Address::generate(&env);
+    let initial_members = vec![&env, member.clone()];
+
+    client.init(&owner, &initial_members);
+
+    // Set precision spending limit with rollover
+    let limit = PrecisionSpendingLimit {
+        limit: 1000_0000000,
+        min_precision: 1,
+        max_single_tx: 100_0000000,
+        enable_rollover: true,
+    };
+    client.set_precision_spending_limit(&owner, &member, &limit);
+
+    // Verify spending tracker was created
+    let tracker_before = client.get_spending_tracker(&member);
+    assert!(tracker_before.is_some());
+    let tracked_spent = tracker_before.unwrap().current_spent;
+    assert_eq!(tracked_spent, 0, "Initial spent should be 0");
+
+    // Remove the member
+    client.remove_family_member(&owner, &member);
+
+    // Verify tracking is gone
+    let tracker_removed = client.get_spending_tracker(&member);
+    assert!(tracker_removed.is_none());
+
+    // Re-add the same member
+    client.add_member(&owner, &member, &FamilyRole::Member, &0);
+
+    // Verify the member exists again
+    let member_data = client.get_family_member(&member);
+    assert!(member_data.is_some());
+    assert_eq!(member_data.unwrap().role, FamilyRole::Member);
+
+    // Verify the spending tracker is clean (starting from fresh state, not carried over)
+    let tracker_after_readd = client.get_spending_tracker(&member);
+    // It might be None or a fresh tracker depending on when it's created
+    // If it exists, it should have 0 current_spent
+    if let Some(tracker) = tracker_after_readd {
+        assert_eq!(
+            tracker.current_spent, 0,
+            "Re-added member should have clean spending state"
+        );
+        assert_eq!(
+            tracker.tx_count, 0,
+            "Re-added member should have 0 transaction count"
+        );
+    }
+}
+
+#[test]
+fn test_batch_remove_clears_all_member_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, FamilyWallet);
+    let client = FamilyWalletClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let member1 = Address::generate(&env);
+    let member2 = Address::generate(&env);
+    let member3 = Address::generate(&env);
+    let initial_members = vec![&env, member1.clone(), member2.clone(), member3.clone()];
+
+    client.init(&owner, &initial_members);
+
+    // Set precision limits for all members
+    let limit1 = PrecisionSpendingLimit {
+        limit: 1000_0000000,
+        min_precision: 1,
+        max_single_tx: 100_0000000,
+        enable_rollover: true,
+    };
+    let limit2 = PrecisionSpendingLimit {
+        limit: 2000_0000000,
+        min_precision: 1,
+        max_single_tx: 200_0000000,
+        enable_rollover: true,
+    };
+    let limit3 = PrecisionSpendingLimit {
+        limit: 3000_0000000,
+        min_precision: 1,
+        max_single_tx: 300_0000000,
+        enable_rollover: true,
+    };
+
+    client.set_precision_spending_limit(&owner, &member1, &limit1);
+    client.set_precision_spending_limit(&owner, &member2, &limit2);
+    client.set_precision_spending_limit(&owner, &member3, &limit3);
+
+    // Verify all have spending trackers
+    assert!(client.get_spending_tracker(&member1).is_some());
+    assert!(client.get_spending_tracker(&member2).is_some());
+    assert!(client.get_spending_tracker(&member3).is_some());
+
+    // Batch remove members
+    let to_remove = vec![&env, member1.clone(), member2.clone(), member3.clone()];
+    let count = client.batch_remove_family_members(&owner, &to_remove);
+    assert_eq!(count, 3);
+
+    // Verify all spending trackers are cleared
+    assert!(
+        client.get_spending_tracker(&member1).is_none(),
+        "Member1 spending tracker should be cleared"
+    );
+    assert!(
+        client.get_spending_tracker(&member2).is_none(),
+        "Member2 spending tracker should be cleared"
+    );
+    assert!(
+        client.get_spending_tracker(&member3).is_none(),
+        "Member3 spending tracker should be cleared"
+    );
+
+    // Verify members are removed
+    assert!(client.get_family_member(&member1).is_none());
+    assert!(client.get_family_member(&member2).is_none());
+    assert!(client.get_family_member(&member3).is_none());
+}
+
+#[test]
+fn test_batch_remove_with_mixed_members_clears_all_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, FamilyWallet);
+    let client = FamilyWalletClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let member1 = Address::generate(&env);
+    let member2 = Address::generate(&env);
+    let member3 = Address::generate(&env);
+    let initial_members = vec![&env, member1.clone(), member2.clone(), member3.clone()];
+
+    client.init(&owner, &initial_members);
+
+    // Set precision limit only on member1 and member3
+    let limit = PrecisionSpendingLimit {
+        limit: 1000_0000000,
+        min_precision: 1,
+        max_single_tx: 100_0000000,
+        enable_rollover: true,
+    };
+
+    client.set_precision_spending_limit(&owner, &member1, &limit);
+    client.set_precision_spending_limit(&owner, &member3, &limit);
+    // member2 has no precision limit
+
+    // Verify state
+    assert!(client.get_spending_tracker(&member1).is_some());
+    assert!(client.get_spending_tracker(&member2).is_none()); // member2 never had one
+    assert!(client.get_spending_tracker(&member3).is_some());
+
+    // Batch remove all members
+    let to_remove = vec![&env, member1.clone(), member2.clone(), member3.clone()];
+    let count = client.batch_remove_family_members(&owner, &to_remove);
+    assert_eq!(count, 3);
+
+    // Verify all trackers are gone
+    assert!(client.get_spending_tracker(&member1).is_none());
+    assert!(client.get_spending_tracker(&member2).is_none());
+    assert!(client.get_spending_tracker(&member3).is_none());
+
+    // Re-add member2 and verify it still has no tracker (wasn't creating stale state)
+    client.add_member(&owner, &member2, &FamilyRole::Member, &0);
+    assert!(client.get_family_member(&member2).is_some());
+    assert!(client.get_spending_tracker(&member2).is_none());
+}

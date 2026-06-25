@@ -58,7 +58,7 @@ fn make_env() -> Env {
     env
 }
 
-fn setup(env: &Env) -> (BillPaymentsClient, Address) {
+fn setup<'a>(env: &'a Env) -> (BillPaymentsClient<'a>, Address) {
     let id = env.register_contract(None, BillPayments);
     let client = BillPaymentsClient::new(env, &id);
     let owner = Address::generate(env);
